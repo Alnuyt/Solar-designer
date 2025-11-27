@@ -1,9 +1,12 @@
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import plotly.graph_objects as go
 
 from excel_generator import get_catalog, generate_workbook_bytes
+from pdf_generator import generate_pdf_bytes
 
 # ----------------------------------------------------
 # CONFIG STREAMLIT
@@ -64,12 +67,11 @@ def monthly_consumption_profile(annual_kwh: float, profile: str):
 
 
 def get_hourly_profile(profile_name: str):
-    """Renvoie un profil de consommation horaire (24 valeurs qui somment à 1)."""
+    """Profil de consommation horaire (24 valeurs qui somment à 1)."""
     if profile_name == "Uniforme":
         return np.ones(24) / 24
 
     if profile_name == "Classique (matin + soir)":
-        # Pic matin + pic soir
         prof = np.array([
             0.02,0.02,0.02,0.02,0.02,
             0.04,0.06,0.08,0.06,0.03,
@@ -99,8 +101,46 @@ def get_hourly_profile(profile_name: str):
         ])
         return prof / prof.sum()
 
-    # fallback
     return np.ones(24) / 24
+
+
+def make_string_diagram(panel_id, n_series, inverter_id, grid_type):
+    """Schéma simple PV string -> MPPT -> onduleur -> réseau."""
+    fig = go.Figure()
+
+    # Rectangles
+    fig.add_shape(type="rect", x0=0,   y0=0.2, x1=0.8, y1=0.8)  # PV
+    fig.add_shape(type="rect", x0=1.4, y0=0.2, x1=2.2, y1=0.8)  # MPPT
+    fig.add_shape(type="rect", x0=2.8, y0=0.2, x1=3.8, y1=0.8)  # Onduleur
+    fig.add_shape(type="rect", x0=4.4, y0=0.2, x1=5.4, y1=0.8)  # Réseau
+
+    # Texte
+    fig.add_annotation(x=0.4, y=0.5,
+                       text=f"{n_series} x {panel_id}",
+                       showarrow=False)
+    fig.add_annotation(x=1.8, y=0.5,
+                       text="MPPT",
+                       showarrow=False)
+    label_inv = inverter_id if inverter_id else "Onduleur"
+    fig.add_annotation(x=3.3, y=0.5,
+                       text=label_inv,
+                       showarrow=False)
+    fig.add_annotation(x=4.9, y=0.5,
+                       text=grid_type,
+                       showarrow=False)
+
+    # Flèches
+    fig.add_annotation(x=0.8, y=0.5, ax=1.4, ay=0.5,
+                       showarrow=True, arrowhead=2)
+    fig.add_annotation(x=2.2, y=0.5, ax=2.8, ay=0.5,
+                       showarrow=True, arrowhead=2)
+    fig.add_annotation(x=3.8, y=0.5, ax=4.4, ay=0.5,
+                       showarrow=True, arrowhead=2)
+
+    fig.update_xaxes(visible=False)
+    fig.update_yaxes(visible=False)
+    fig.update_layout(height=250, margin=dict(l=20, r=20, t=20, b=20))
+    return fig
 
 
 # ----------------------------------------------------
@@ -161,22 +201,17 @@ p_stc = get_panel_power(panel_id)
 p_dc_total = p_stc * n_modules
 p_dc_kwp = p_dc_total / 1000.0
 
-# On suggère un onduleur en fonction du type réseau + ratio DC/AC
+# Suggestion d’onduleur
 recommended = get_recommended_inverter(p_dc_total, grid_type, max_dc_ac)
 
-# Liste d’onduleurs compatibles pour ce type de réseau
 inv_options = []
 if recommended is not None:
     inv_options.append(f"(Auto) {recommended}")
-
 inv_options += [inv[0] for inv in INVERTERS if inv[8] == grid_type]
-
-# fallback si vraiment aucun match
-if not inv_options:
+if not inv_options:  # fallback improbable
     inv_options = [inv[0] for inv in INVERTERS]
 
 selected_inv_label = st.sidebar.selectbox("Onduleur", options=inv_options, index=0)
-
 if selected_inv_label.startswith("(Auto) "):
     inverter_id = recommended
 else:
@@ -195,12 +230,32 @@ autocons_monthly = np.minimum(pv_monthly, cons_monthly)
 months_labels = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin",
                  "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
 
+pv_year = float(pv_monthly.sum())
+cons_year = float(annual_consumption)
+autocons_year = float(autocons_monthly.sum())
+
+if pv_year > 0:
+    taux_auto = autocons_year / pv_year * 100
+else:
+    taux_auto = 0.0
+if cons_year > 0:
+    taux_couv = autocons_year / cons_year * 100
+else:
+    taux_couv = 0.0
 
 # ----------------------------------------------------
-# HEADER / SYNTHÈSE RAPIDE
+# HEADER AVEC LOGO
 # ----------------------------------------------------
-st.title("⚡ Dimensionneur Solaire Sigen – Horizon Énergie")
+col_logo, col_title = st.columns([1, 3])
 
+with col_logo:
+    if os.path.exists("logo_horizon.png"):
+        st.image("logo_horizon.png", use_column_width=True)
+
+with col_title:
+    st.title("Dimensionneur Solaire Sigen – Horizon Énergie")
+
+# Résumé chiffres
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -208,19 +263,10 @@ with col1:
     st.metric("Puissance panneau", f"{p_stc:.0f} Wc")
 
 with col2:
-    st.metric("Conso annuelle", f"{annual_consumption:.0f} kWh")
-    st.metric("Prod PV annuelle", f"{pv_monthly.sum():.0f} kWh")
+    st.metric("Conso annuelle", f"{cons_year:.0f} kWh")
+    st.metric("Prod PV annuelle", f"{pv_year:.0f} kWh")
 
 with col3:
-    if pv_monthly.sum() > 0:
-        taux_auto = autocons_monthly.sum() / pv_monthly.sum() * 100
-    else:
-        taux_auto = 0.0
-    if annual_consumption > 0:
-        taux_couv = autocons_monthly.sum() / annual_consumption * 100
-    else:
-        taux_couv = 0.0
-
     st.metric("Taux autocons.", f"{taux_auto:.1f} %")
     st.metric("Taux couverture", f"{taux_couv:.1f} %")
 
@@ -248,7 +294,6 @@ fig = px.bar(
     labels={"value": "kWh", "variable": ""},
 )
 st.plotly_chart(fig, use_container_width=True)
-
 st.dataframe(df_month)
 
 
@@ -296,8 +341,16 @@ fig2 = px.line(
     labels={"value": "kWh", "variable": ""},
 )
 st.plotly_chart(fig2, use_container_width=True)
-
 st.dataframe(df_hour)
+
+
+# ----------------------------------------------------
+# SCHÉMA DU STRING
+# ----------------------------------------------------
+st.markdown("## 📐 Schéma du string PV → onduleur")
+
+fig_string = make_string_diagram(panel_id, n_series, inverter_id, grid_type)
+st.plotly_chart(fig_string, use_container_width=True)
 
 
 # ----------------------------------------------------
@@ -327,4 +380,38 @@ if st.button("Générer l’Excel"):
         data=xlsx_bytes,
         file_name="Dimensionnement_Sigen_Complet.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+
+
+# ----------------------------------------------------
+# EXPORT PDF
+# ----------------------------------------------------
+st.markdown("## 📄 Export PDF récapitulatif")
+
+summary = {
+    "panel_id": panel_id,
+    "n_modules": int(n_modules),
+    "grid_type": grid_type,
+    "inverter_id": inverter_id,
+    "battery_enabled": battery_enabled,
+    "battery_kwh": float(battery_kwh),
+    "p_stc": float(p_stc),
+    "p_dc_total": float(p_dc_total),
+    "pv_year": pv_year,
+    "cons_year": cons_year,
+    "autocons_year": autocons_year,
+    "taux_auto": taux_auto,
+    "taux_couv": taux_couv,
+    "t_min": float(t_min),
+    "t_max": float(t_max),
+    "n_series": int(n_series),
+}
+
+if st.button("Générer le PDF"):
+    pdf_bytes = generate_pdf_bytes(config, summary, logo_path="logo_horizon.png")
+    st.download_button(
+        "Télécharger le PDF",
+        data=pdf_bytes,
+        file_name="Dimensionnement_Sigen_Synthese.pdf",
+        mime="application/pdf",
     )
