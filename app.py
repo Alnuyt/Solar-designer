@@ -1,4 +1,5 @@
 import os
+import math
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -29,22 +30,44 @@ def get_panel_power(panel_id: str) -> float:
     return 0.0
 
 
-def get_panel_params(panel_id: str):
-    """Retourne Voc, Vmp, alpha_V (%/°C) pour un panneau."""
+def get_panel_elec(panel_id: str):
+    """
+    Retourne un dict avec les paramètres électriques du panneau :
+    Voc, Vmp, Isc, alpha_V (%/°C), P_STC.
+    """
     for p in PANELS:
         if p[0] == panel_id:
-            # [id, Pstc, Voc, Vmp, Isc, Imp, alpha_V]
-            return float(p[2]), float(p[3]), float(p[6])
-    return None, None, None
+            return {
+                "id": p[0],
+                "Pstc": float(p[1]),
+                "Voc": float(p[2]),
+                "Vmp": float(p[3]),
+                "Isc": float(p[4]),
+                "alpha_V": float(p[6]),  # %/°C
+            }
+    return None
 
 
-def get_inverter_params(inv_id: str):
-    """Retourne (Vdc_max, VMPP_min, VMPP_max, nb_mppt) pour un onduleur."""
+def get_inverter_elec(inv_id: str):
+    """
+    Retourne un dict avec les paramètres électriques de l'onduleur :
+    Vdc_max, Vmpp_min, Vmpp_max, Impp_max, nb_mppt, P_ac_nom.
+    """
     for inv in INVERTERS:
-        # (id, P_AC, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type)
+        # (id, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type)
         if inv[0] == inv_id:
-            return float(inv[5]), float(inv[3]), float(inv[4]), int(inv[7])
-    return None, None, None, 2
+            return {
+                "id": inv[0],
+                "P_ac": float(inv[1]),
+                "P_dc_max": float(inv[2]),
+                "Vmpp_min": float(inv[3]),
+                "Vmpp_max": float(inv[4]),
+                "Vdc_max": float(inv[5]),
+                "Impp_max": float(inv[6]),
+                "nb_mppt": int(inv[7]),
+                "type_reseau": inv[8],
+            }
+    return None
 
 
 def get_recommended_inverter(p_dc_total: float, grid_type: str, max_dc_ac: float):
@@ -65,7 +88,7 @@ def get_recommended_inverter(p_dc_total: float, grid_type: str, max_dc_ac: float
 
 
 def monthly_pv_profile_kwh_kwp():
-    """Profil mensuel PV Belgique (kWh/an/kWc réparti par mois)."""
+    """Profil mensuel PV Belgique (kWh/an/kWc)."""
     annual_kwh_kwp = 1034.0
     distribution = np.array([3.8, 5.1, 8.7, 11.5, 12.1, 11.8,
                              11.9, 10.8, 9.7, 7.0, 4.3, 3.3])
@@ -120,30 +143,149 @@ def get_hourly_profile(profile_name: str):
 
     return np.ones(24) / 24
 
-def make_string_diagram(panel_id, n_series, n_strings, inverter_id, grid_type, nb_mppt=2):
+
+def optimize_strings(
+    N_tot,
+    panel,
+    inverter,
+    T_min,
+    T_max,
+    ratio_dc_ac_target=1.25,
+    ratio_dc_ac_min=1.05,
+    ratio_dc_ac_max=1.35,
+):
+    """
+    Optimisation automatique des strings :
+    - calcule N_series, N_strings, répartition par MPPT
+    - respecte Standard Sigen : max 2 strings / MPPT
+    - vérifie Voc_froid, Vmp_chaud, courant MPPT, ratio DC/AC
+    """
+    Voc = panel["Voc"]
+    Vmp = panel["Vmp"]
+    Isc = panel["Isc"]
+    alpha_V = panel["alpha_V"] / 100.0   # %/°C -> 1/°C
+    Pstc = panel["Pstc"]
+
+    Vdc_max = inverter["Vdc_max"]
+    Vmpp_min = inverter["Vmpp_min"]
+    Vmpp_max = inverter["Vmpp_max"]
+    Impp_max = inverter["Impp_max"]
+    nb_mppt = inverter["nb_mppt"]
+    P_ac = inverter["P_ac"]
+
+    # --- 1) bornes sur N_series ---
+    voc_factor_cold = (1 + alpha_V * (T_min - 25.0))
+    vmp_factor_hot = (1 + alpha_V * (T_max - 25.0))
+
+    if voc_factor_cold <= 0 or vmp_factor_hot <= 0:
+        return None  # incohérent
+
+    N_series_max = math.floor(Vdc_max / (Voc * voc_factor_cold))
+    N_series_min = math.ceil(Vmpp_min / (Vmp * vmp_factor_hot))
+
+    if N_series_max < 1 or N_series_min > N_series_max:
+        return None  # impossible
+
+    best = None
+    best_score = -1e9
+
+    for N_series in range(N_series_min, N_series_max + 1):
+        # tensions string
+        Voc_cold = N_series * Voc * voc_factor_cold
+        Vmp_hot = N_series * Vmp * vmp_factor_hot
+
+        if Voc_cold > Vdc_max:
+            continue
+        if not (Vmpp_min <= Vmp_hot <= Vmpp_max):
+            continue
+
+        # max strings possibles d'après le nombre total de modules
+        N_strings_theo = N_tot // N_series
+        if N_strings_theo < 1:
+            continue
+
+        # Standard Sigen : max 2 strings / MPPT
+        N_strings_max_mppt = nb_mppt * 2
+        N_strings_max = min(N_strings_theo, N_strings_max_mppt)
+
+        for N_strings in range(1, N_strings_max + 1):
+            # répartition sur MPPT (équilibre)
+            base = N_strings // nb_mppt
+            rest = N_strings % nb_mppt
+            strings_per_mppt = [base + (1 if i < rest else 0) for i in range(nb_mppt)]
+
+            # check courant par MPPT
+            ok_current = True
+            for s in strings_per_mppt:
+                I_total = s * Isc
+                if I_total > Impp_max:
+                    ok_current = False
+                    break
+            if not ok_current:
+                continue
+
+            # puissance DC réellement câblée
+            N_used = N_series * N_strings
+            P_dc = N_used * Pstc
+            ratio_dc_ac = P_dc / P_ac
+
+            if ratio_dc_ac < ratio_dc_ac_min or ratio_dc_ac > ratio_dc_ac_max:
+                continue
+
+            # score : ratio proche cible + N_used max + mppt équilibrés
+            penalty_ratio = abs(ratio_dc_ac - ratio_dc_ac_target)
+            imbalance = max(strings_per_mppt) - min(strings_per_mppt)
+
+            score = (
+                -10 * penalty_ratio        # ratio proche cible
+                + N_used * 0.01            # plus de panneaux utilisés
+                - 2 * imbalance            # pénalise déséquilibre MPPT
+            )
+
+            if score > best_score:
+                best_score = score
+                best = {
+                    "N_series": N_series,
+                    "N_strings": N_strings,
+                    "strings_per_mppt": strings_per_mppt,
+                    "N_used": N_used,
+                    "P_dc": P_dc,
+                    "ratio_dc_ac": ratio_dc_ac,
+                    "Voc_cold": Voc_cold,
+                    "Vmp_hot": Vmp_hot,
+                }
+
+    return best
+
+
+def make_string_diagram(panel_id, opt_result, inverter_id, grid_type, nb_mppt):
     """
     Schéma simple et lisible :
     - 1 bloc par string avec "String 1 : N x panneau"
     - 1 ou plusieurs MPPT
     - 1 bloc onduleur
     """
+    if opt_result is None:
+        return go.Figure()
+
+    N_series = opt_result["N_series"]
+    N_strings = opt_result["N_strings"]
+    strings_per_mppt = opt_result["strings_per_mppt"]
+
     fig = go.Figure()
 
-    # Positions horizontales
     x_string = 0.0
     x_mppt = 2.5
     x_inverter = 5.0
 
-    # Espacement vertical
     y_step = 1.5
-    n_rows = max(n_strings, nb_mppt)
+    n_rows = max(N_strings, nb_mppt)
     total_height = (n_rows - 1) * y_step
     y_center = total_height / 2
 
     # --- Strings ---
-    for s in range(n_strings):
+    for s in range(N_strings):
         y = y_center - s * y_step
-        # bloc string
         fig.add_shape(
             type="rect",
             x0=x_string, y0=y - 0.4,
@@ -153,7 +295,7 @@ def make_string_diagram(panel_id, n_series, n_strings, inverter_id, grid_type, n
         fig.add_annotation(
             x=x_string + 0.9,
             y=y,
-            text=f"String {s+1}\n{n_series} x {panel_id}",
+            text=f"String {s+1}\n{N_series} x {panel_id}",
             showarrow=False,
             font=dict(size=10, color="green"),
         )
@@ -192,8 +334,13 @@ def make_string_diagram(panel_id, n_series, n_strings, inverter_id, grid_type, n
     )
 
     # --- Câblage Strings -> MPPT ---
-    for s in range(n_strings):
-        mppt_index = s if s < nb_mppt else 0  # si plus de strings que de MPPT
+    # on affecte les strings aux MPPT dans l'ordre
+    mppt_assign = []
+    for m, count in enumerate(strings_per_mppt):
+        mppt_assign.extend([m] * count)
+
+    for s in range(N_strings):
+        mppt_index = mppt_assign[s] if s < len(mppt_assign) else 0
         y_string = y_center - s * y_step
         y_mppt = y_center - mppt_index * y_step
         fig.add_annotation(
@@ -268,13 +415,10 @@ with st.sidebar:
     )
 
     st.markdown("---")
-    st.markdown("### Vérification électrique (strings)")
+    st.markdown("### Températures de calcul (tensions)")
 
     t_min = st.number_input("Température min (°C)", min_value=-30, max_value=10, value=-10)
     t_max = st.number_input("Température max (°C)", min_value=30, max_value=90, value=70)
-
-    n_series = st.number_input("Modules en série par string", min_value=1, max_value=30, value=10)
-    n_strings = st.radio("Nombre de strings", options=[1, 2], index=0)
 
     st.markdown("---")
     month_for_hours = st.slider("Mois pour le profil horaire", min_value=1, max_value=12, value=6)
@@ -284,10 +428,10 @@ with st.sidebar:
 # CALCULS PRINCIPAUX
 # ----------------------------------------------------
 p_stc = get_panel_power(panel_id)
-p_dc_total = p_stc * n_modules
-p_dc_kwp = p_dc_total / 1000.0
+p_dc_total_theoretical = p_stc * n_modules
 
-recommended = get_recommended_inverter(p_dc_total, grid_type, max_dc_ac)
+# Sélection / recommandation onduleur (comme avant)
+recommended = get_recommended_inverter(p_dc_total_theoretical, grid_type, max_dc_ac)
 
 inv_options = []
 if recommended is not None:
@@ -301,6 +445,37 @@ if selected_inv_label.startswith("(Auto) "):
     inverter_id = recommended
 else:
     inverter_id = selected_inv_label
+
+panel_elec = get_panel_elec(panel_id)
+inv_elec = get_inverter_elec(inverter_id) if inverter_id else None
+
+opt_result = None
+nb_mppt = inv_elec["nb_mppt"] if inv_elec else 2
+
+if (panel_elec is not None) and (inv_elec is not None):
+    opt_result = optimize_strings(
+        N_tot=int(n_modules),
+        panel=panel_elec,
+        inverter=inv_elec,
+        T_min=float(t_min),
+        T_max=float(t_max),
+    )
+
+if opt_result is not None:
+    N_series = opt_result["N_series"]
+    N_strings = opt_result["N_strings"]
+    N_used = opt_result["N_used"]
+    p_dc_total = opt_result["P_dc"]
+    ratio_dc_ac = opt_result["ratio_dc_ac"]
+else:
+    # fallback : on considère tous les panneaux en série unique (non optimal, mais au moins défini)
+    N_series = int(n_modules)
+    N_strings = 1
+    N_used = int(n_modules)
+    p_dc_total = p_dc_total_theoretical
+    ratio_dc_ac = p_dc_total / inv_elec["P_ac"] if inv_elec else 0.0
+
+p_dc_kwp = p_dc_total / 1000.0
 
 # Production PV mensuelle
 pv_kwh_per_kwp = monthly_pv_profile_kwh_kwp()
@@ -336,8 +511,8 @@ with col_title:
 
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("Puissance DC totale", f"{p_dc_total:.0f} Wc")
-    st.metric("Puissance panneau", f"{p_stc:.0f} Wc")
+    st.metric("Puissance DC théorique", f"{p_dc_total_theoretical:.0f} Wc")
+    st.metric("Puissance DC câblée", f"{p_dc_total:.0f} Wc")
 
 with col2:
     st.metric("Conso annuelle", f"{cons_year:.0f} kWh")
@@ -349,6 +524,13 @@ with col3:
 
 with col4:
     st.metric("Onduleur", inverter_id if inverter_id else "Aucun")
+    st.metric("Ratio DC/AC", f"{ratio_dc_ac:.2f}" if ratio_dc_ac > 0 else "-")
+
+if opt_result is not None and N_used < n_modules:
+    st.warning(
+        f"Configuration optimale utilise {N_used} panneaux sur {n_modules} disponibles. "
+        "Certains panneaux ne peuvent pas être câblés proprement dans les limites électriques."
+    )
 
 # ----------------------------------------------------
 # PROFIL MENSUEL
@@ -421,21 +603,20 @@ st.dataframe(df_hour)
 # ----------------------------------------------------
 st.markdown("## ⚡ Vérification du string (Voc froid / Vmp chaud)")
 
-Voc_mod, Vmp_mod, alpha_V = get_panel_params(panel_id)
-Vdc_max, VMPP_min, VMPP_max, nb_mppt = get_inverter_params(inverter_id) if inverter_id else (None, None, None, 2)
-
 voc_string = None
 vmp_string = None
 voc_ok = None
 vmp_ok = None
 
-if Voc_mod is not None and Vdc_max is not None:
-    alpha = alpha_V / 100.0  # %/°C → 1/°C
-    voc_string = n_series * Voc_mod * (1 + alpha * (t_min - 25))
-    vmp_string = n_series * Vmp_mod * (1 + alpha * (t_max - 25))
+if opt_result is not None and inv_elec is not None:
+    voc_string = opt_result["Voc_cold"]
+    vmp_string = opt_result["Vmp_hot"]
+    Vdc_max = inv_elec["Vdc_max"]
+    Vmpp_min = inv_elec["Vmpp_min"]
+    Vmpp_max = inv_elec["Vmpp_max"]
 
     voc_ok = voc_string <= Vdc_max
-    vmp_ok = (vmp_string >= VMPP_min) and (vmp_string <= VMPP_max)
+    vmp_ok = (vmp_string >= Vmpp_min) and (vmp_string <= Vmpp_max)
 
 col_a, col_b, col_c = st.columns(3)
 with col_a:
@@ -445,11 +626,11 @@ with col_a:
 with col_b:
     if vmp_string is not None:
         st.metric("Vmp string (chaud)", f"{vmp_string:.1f} V")
-        st.write(f"Plage MPPT = {VMPP_min:.0f} – {VMPP_max:.0f} V")
+        st.write(f"Plage MPPT = {Vmpp_min:.0f} – {Vmpp_max:.0f} V")
 with col_c:
     if voc_ok is not None and vmp_ok is not None:
         if voc_ok and vmp_ok:
-            st.success("String conforme : tension OK à froid et à chaud.")
+            st.success("Configuration conforme : tension OK à froid et à chaud.")
         else:
             if not voc_ok:
                 st.error("⚠ Voc string à froid dépasse Vdc_max de l’onduleur.")
@@ -463,11 +644,10 @@ st.markdown("## 📐 Schéma du câblage strings → MPPT → onduleur")
 
 fig_string = make_string_diagram(
     panel_id=panel_id,
-    n_series=n_series,
+    opt_result=opt_result,
     inverter_id=inverter_id,
     grid_type=grid_type,
-    n_strings=n_strings,
-    nb_mppt=nb_mppt if nb_mppt else 2,
+    nb_mppt=nb_mppt,
 )
 st.plotly_chart(fig_string, use_container_width=True)
 
@@ -487,7 +667,8 @@ config = {
     "consumption_profile": consumption_profile,
     "t_min": float(t_min),
     "t_max": float(t_max),
-    "n_series": int(n_series),
+    # on envoie N_series auto pour que l’onglet “Strings” soit cohérent
+    "n_series": int(N_series),
     "inverter_id": inverter_id,
 }
 
