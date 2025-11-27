@@ -174,7 +174,7 @@ fig = px.bar(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.dataframe(df_month.style.format("{:.1f}"))
+st.table(df_month.style.format("{:.1f}"))
 
 
 # ----------------------------------------------------
@@ -217,7 +217,7 @@ fig2 = px.line(
 )
 st.plotly_chart(fig2, use_container_width=True)
 
-st.dataframe(df_hour.style.format("{:.3f}"))
+st.table(df_hour.style.format("{:.3f}"))
 
 
 # ----------------------------------------------------
