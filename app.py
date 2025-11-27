@@ -174,7 +174,13 @@ fig = px.bar(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-st.table(df_month.style.format("{:.1f}"))
+df_month_display = df_month.copy().astype({
+    "Consommation (kWh)": float,
+    "Production PV (kWh)": float,
+    "Autoconsommation (kWh)": float,
+})
+
+st.dataframe(df_month_display)
 
 
 # ----------------------------------------------------
@@ -219,6 +225,7 @@ st.plotly_chart(fig2, use_container_width=True)
 
 st.table(df_hour.style.format("{:.3f}"))
 
+st.dataframe(df_month_display)
 
 # ----------------------------------------------------
 # EXPORT EXCEL
