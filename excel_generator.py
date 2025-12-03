@@ -3,7 +3,7 @@ from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
 
 
-ddef get_catalog():
+def get_catalog():
     panels = [
         ["Trina450", 450, 52.9, 44.6, 10.74, 10.09, -0.24],
         ["Trina500", 500, 40.1, 38.3, 15.03, 12.18, -0.24],
@@ -14,13 +14,12 @@ ddef get_catalog():
     ]
 
     # ----------------------------------------------------
-    # ONDULEURS SIGEN – full catalogue fourni
-    # place une base électrique générique cohérente
-    # ----------------------------------------------------
+    # ONDULEURS SIGEN – catalogue complet
     # Format :
-    # (ID, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type_reseau, Famille)
+    # (ID, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max,
+    #  V_DC_max, I_MPPT, Nb_MPPT, Type_reseau, Famille)
     # Famille = "Hybride" ou "Store"
-
+    # ----------------------------------------------------
     default_mpp_min = 50
     default_mpp_max = 550
     default_vdcmax = 600
@@ -40,18 +39,18 @@ ddef get_catalog():
         ("Store4.6Mono", 4600, 9200, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Mono", "Store"),
         ("Store6.0Mono", 6000, 12000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Mono", "Store"),
 
-        # --- DELTA Hybride ---
+        # --- DELTA Hybride (Tri 3x230) ---
         ("Hybride3.0Delta", 3000, 6000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Hybride"),
         ("Hybride5.0Delta", 5000, 10000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Hybride"),
         ("Hybride6.0Delta", 6000, 12000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Hybride"),
         ("Hybride8.0Delta", 8000, 16000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Hybride"),
         ("Hybride10.0Delta", 10000, 20000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Hybride"),
 
-        # --- DELTA Store ---
+        # --- DELTA Store (Tri 3x230) ---
         ("Store6.0Delta", 6000, 12000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Store"),
         ("Store8.0Delta", 8000, 16000, default_mpp_min, default_mpp_max, default_vdcmax, default_imppt, default_mppt, "Tri 3x230", "Store"),
 
-        # --- TETRA Hybride ---
+        # --- TETRA Hybride (Tri 3x400) ---
         ("Hybride3.0Tetra", 3000, 6000, 160, 1000, 1100, 16, 2, "Tri 3x400", "Hybride"),
         ("Hybride5.0Tetra", 5000, 10000, 160, 1000, 1100, 16, 2, "Tri 3x400", "Hybride"),
         ("Hybride6.0Tetra", 6000, 12000, 160, 1000, 1100, 16, 2, "Tri 3x400", "Hybride"),
@@ -60,7 +59,7 @@ ddef get_catalog():
         ("Hybride12.0Tetra", 12000, 24000, 160, 1000, 1100, 32, 2, "Tri 3x400", "Hybride"),
         ("Hybride15.0Tetra", 15000, 30000, 160, 1000, 1100, 32, 2, "Tri 3x400", "Hybride"),
 
-        # --- TETRA Store ---
+        # --- TETRA Store (Tri 3x400) ---
         ("Store5.0Tetra", 5000, 10000, 160, 1000, 1100, 16, 2, "Tri 3x400", "Store"),
         ("Store6.0Tetra", 6000, 12000, 160, 1000, 1100, 16, 2, "Tri 3x400", "Store"),
         ("Store8.0Tetra", 8000, 16000, 160, 1000, 1100, 32, 2, "Tri 3x400", "Store"),
@@ -102,8 +101,10 @@ def generate_workbook_bytes(config: dict) -> bytes:
 
     ws_cat.append([""])
     ws_cat.append(["Onduleurs"])
-    ws_cat.append(["ID", "P_AC_nom", "P_DC_max", "V_MPP_min", "V_MPP_max",
-                   "V_DC_max", "I_MPPT", "Nb_MPPT", "Type_reseau", "Famille"])
+    ws_cat.append([
+        "ID", "P_AC_nom", "P_DC_max", "V_MPP_min", "V_MPP_max",
+        "V_DC_max", "I_MPPT", "Nb_MPPT", "Type_reseau", "Famille"
+    ])
     first_inv_row = ws_cat.max_row + 1
     for inv in inverters:
         ws_cat.append(list(inv))
@@ -165,14 +166,14 @@ def generate_workbook_bytes(config: dict) -> bytes:
     ws_pr.append([""])
     ws_pr.append(["Mois", "%_conso", "Conso_kWh", "Prod_PV_kWh", "kWh_kWp_BEL", "Autocons_kWh"])
 
-    months = ["Jan","Fév","Mar","Avr","Mai","Juin",
-              "Juil","Août","Sep","Oct","Nov","Déc"]
-    percent_std = [7,7,8,9,9,9,9,9,8,8,8,9]
-    percent_winter = [10,10,10,9,8,7,6,6,7,8,9,10]
-    percent_summer = [6,6,7,8,9,10,11,11,10,8,7,7]
+    months = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin",
+              "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
+    percent_std = [7, 7, 8, 9, 9, 9, 9, 9, 8, 8, 8, 9]
+    percent_winter = [10, 10, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10]
+    percent_summer = [6, 6, 7, 8, 9, 10, 11, 11, 10, 8, 7, 7]
 
     annual_kwh_kwp = 1034.0
-    distribution = [3.8,5.1,8.7,11.5,12.1,11.8,11.9,10.8,9.7,7.0,4.3,3.3]
+    distribution = [3.8, 5.1, 8.7, 11.5, 12.1, 11.8, 11.9, 10.8, 9.7, 7.0, 4.3, 3.3]
     kwh_kwp = [annual_kwh_kwp * d / 100.0 for d in distribution]
 
     start = 5
@@ -226,17 +227,17 @@ def generate_workbook_bytes(config: dict) -> bytes:
 
     ws_st["A13"] = "V_DC_max"
     ws_st["B13"] = (
-        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$I${last_inv_row},6,FALSE),\"\")"
+        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$J${last_inv_row},6,FALSE),\"\")"
     )
 
     ws_st["A14"] = "V_MPP_min"
     ws_st["B14"] = (
-        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$I${last_inv_row},4,FALSE),\"\")"
+        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$J${last_inv_row},4,FALSE),\"\")"
     )
 
     ws_st["A15"] = "V_MPP_max"
     ws_st["B15"] = (
-        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$I${last_inv_row},5,FALSE),\"\")"
+        f"=IFERROR(VLOOKUP(B4,Catalogue!$A${first_inv_row}:$J${last_inv_row},5,FALSE),\"\")"
     )
 
     ws_st["A17"] = "Voc string froid"
