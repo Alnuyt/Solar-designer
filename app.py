@@ -386,31 +386,38 @@ with st.sidebar:
 # ----------------------------------------------------
 # CALCULS PRINCIPAUX
 # ----------------------------------------------------
-panel_elec = get_panel_elec(panel_id)
-if panel_elec is None:
-    st.error("Panneau introuvable dans le catalogue.")
+# ----------------------------------------------------
+# CALCULS PRINCIPAUX
+# ----------------------------------------------------
+
+# 1) Récupérer les caractéristiques de l’onduleur choisi
+inv_elec = get_inverter_elec(inverter_id)
+if inv_elec is None:
+    st.error("Spécifications onduleur introuvables.")
     st.stop()
 
-best = select_best_inverter(
+# 2) Optimiser les strings pour CET onduleur (auto ou manuel)
+opt_result = optimize_strings(
+    N_tot=int(n_modules),
     panel=panel_elec,
-    n_panels=int(n_modules),
-    grid_type=grid_type,
-    max_dc_ac=float(max_dc_ac),
-    fam_pref=fam_pref,
+    inverter=inv_elec,
     T_min=float(t_min),
     T_max=float(t_max),
 )
 
-if best is None:
-    st.error("Aucune configuration onduleur + strings valide trouvée avec ces contraintes.")
+# Si impossible → arrêter proprement
+if opt_result is None:
+    st.error(
+        f"Aucun câblage valide trouvé pour l'onduleur {inverter_id}. "
+        "Essayez un autre modèle ou modifiez les températures."
+    )
     st.stop()
 
-inverter_id = best["inv_id"]
-opt_result = best["opt"]
-P_dc = best["P_dc"]
-ratio_dc_ac = best["ratio"]
-
+# 3) Calculs finaux basés sur CET onduleur + cette optimisation
+P_dc = opt_result["P_dc"]
+ratio_dc_ac = opt_result["ratio_dc_ac"]
 p_dc_kwp = P_dc / 1000.0
+
 
 # Profils mensuels
 pv_kwh_per_kwp = monthly_pv_profile_kwh_kwp()
