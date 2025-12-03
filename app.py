@@ -327,7 +327,7 @@ with st.sidebar:
     # ----------------------------------------------------
     battery_enabled = st.checkbox("Batterie", value=False)
     if battery_enabled:
-        battery_kwh = st.slider("Capacité batterie (kWh)", 2.0, 20.0, 6.0, 0.5)
+        battery_kwh = st.slider("Capacité batterie (kWh)", 6.0, 50.0, 6.0, 0.5)
     else:
         battery_kwh = 0.0
 
