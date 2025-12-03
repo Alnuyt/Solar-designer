@@ -51,10 +51,11 @@ def get_panel_elec(panel_id: str):
 def get_inverter_elec(inv_id: str):
     """
     Retourne un dict avec les paramètres électriques de l'onduleur :
-    Vdc_max, Vmpp_min, Vmpp_max, Impp_max, nb_mppt, P_ac_nom.
+    Vdc_max, Vmpp_min, Vmpp_max, Impp_max, nb_mppt, P_ac_nom, type réseau, famille.
     """
     for inv in INVERTERS:
-        # (id, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type_réseau, Famille)
+        # (ID, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max,
+        #  V_DC_max, I_MPPT, Nb_MPPT, Type_reseau, Famille)
         if inv[0] == inv_id:
             return {
                 "id": inv[0],
@@ -66,24 +67,28 @@ def get_inverter_elec(inv_id: str):
                 "Impp_max": float(inv[6]),
                 "nb_mppt": int(inv[7]),
                 "type_reseau": inv[8],
-                "famille": inv[9]
+                "famille": inv[9],
             }
     return None
 
 
-def get_recommended_inverter(p_dc_total: float, grid_type: str, max_dc_ac: float):
+def get_recommended_inverter(p_dc_total: float, grid_type: str, max_dc_ac: float, famille: str | None = None):
     """
     Retourne le premier onduleur compatible avec :
     - Type de réseau
+    - Famille (Hybride / Store) si précisée
     - Ratio DC/AC <= max_dc_ac
+    - P_DC_max respectée
     Sinon None.
     """
     for inv in INVERTERS:
-        inv_id, p_ac, p_dc_max, vmin, vmax, vdcmax, imppt, mppts, inv_type = inv
+        inv_id, p_ac, p_dc_max, vmin, vmax, vdcmax, imppt, mppts, inv_type, inv_family = inv
         if inv_type != grid_type:
             continue
+        if famille is not None and inv_family != famille:
+            continue
         ratio = p_dc_total / p_ac
-        if ratio <= max_dc_ac:
+        if ratio <= max_dc_ac and p_dc_total <= p_dc_max:
             return inv_id
     return None
 
@@ -99,8 +104,8 @@ def monthly_pv_profile_kwh_kwp():
 def monthly_consumption_profile(annual_kwh: float, profile: str):
     profiles = {
         "Standard":   [7, 7, 8, 9, 9, 9, 9, 9, 8, 8, 8, 9],
-        "Hiver fort": [10,10,10, 9, 8, 7, 6, 6, 7, 8, 9,10],
-        "Été fort":   [6, 6, 7, 8, 9,10,11,11,10, 8, 7, 7],
+        "Hiver fort": [10, 10, 10, 9, 8, 7, 6, 6, 7, 8, 9, 10],
+        "Été fort":   [6, 6, 7, 8, 9, 10, 11, 11, 10, 8, 7, 7],
     }
     arr = np.array(profiles[profile], dtype=float)
     arr = arr / arr.sum()
@@ -114,31 +119,31 @@ def get_hourly_profile(profile_name: str):
 
     if profile_name == "Classique (matin + soir)":
         prof = np.array([
-            0.02,0.02,0.02,0.02,0.02,
-            0.04,0.06,0.08,0.06,0.03,
-            0.02,0.02,0.02,0.02,0.03,
-            0.04,0.06,0.08,0.07,0.04,
-            0.02,0.01,0.01,0.01
+            0.02, 0.02, 0.02, 0.02, 0.02,
+            0.04, 0.06, 0.08, 0.06, 0.03,
+            0.02, 0.02, 0.02, 0.02, 0.03,
+            0.04, 0.06, 0.08, 0.07, 0.04,
+            0.02, 0.01, 0.01, 0.01
         ])
         return prof / prof.sum()
 
     if profile_name == "Travail journée (soir fort)":
         prof = np.array([
-            0.01,0.01,0.01,0.01,0.01,
-            0.02,0.03,0.03,0.03,0.02,
-            0.01,0.01,0.01,0.01,0.02,
-            0.04,0.07,0.09,0.10,0.10,
-            0.05,0.02,0.01,0.01
+            0.01, 0.01, 0.01, 0.01, 0.01,
+            0.02, 0.03, 0.03, 0.03, 0.02,
+            0.01, 0.01, 0.01, 0.01, 0.02,
+            0.04, 0.07, 0.09, 0.10, 0.10,
+            0.05, 0.02, 0.01, 0.01
         ])
         return prof / prof.sum()
 
     if profile_name == "Télétravail":
         prof = np.array([
-            0.02,0.02,0.03,0.03,0.03,
-            0.04,0.05,0.06,0.06,0.06,
-            0.05,0.05,0.05,0.05,0.05,
-            0.05,0.05,0.06,0.06,0.06,
-            0.05,0.03,0.02,0.02
+            0.02, 0.02, 0.03, 0.03, 0.03,
+            0.04, 0.05, 0.06, 0.06, 0.06,
+            0.05, 0.05, 0.05, 0.05, 0.05,
+            0.05, 0.05, 0.06, 0.06, 0.06,
+            0.05, 0.03, 0.02, 0.02
         ])
         return prof / prof.sum()
 
@@ -237,11 +242,7 @@ def optimize_strings(
             if ratio_dc_ac < ratio_dc_ac_min or ratio_dc_ac > ratio_dc_ac_max:
                 continue
 
-            # score :
-            # - ratio proche de la cible
-            # - plus de panneaux utilisés
-            # - moins de strings (on préfère 1 string de 8 plutôt que 2x4)
-            # - strings équilibrés sur les MPPT
+            # score
             penalty_ratio = abs(ratio_dc_ac - ratio_dc_ac_target)
             imbalance = max(strings_per_mppt) - min(strings_per_mppt)
 
@@ -345,7 +346,6 @@ def make_string_diagram(panel_id, opt_result, inverter_id, grid_type, nb_mppt):
     )
 
     # --- Câblage Strings -> MPPT ---
-    # affectation des strings aux MPPT dans l'ordre
     mppt_assign = []
     for m, count in enumerate(strings_per_mppt):
         mppt_assign.extend([m] * count)
@@ -395,7 +395,13 @@ with st.sidebar:
     # Minimum 6 panneaux
     n_modules = st.number_input("Nombre de panneaux", min_value=6, max_value=100, value=12)
 
-    grid_type = st.selectbox("Type de réseau", options=["Mono", "Tri 3x400"], index=0)
+    grid_type = st.selectbox("Type de réseau", options=["Mono", "Tri 3x230", "Tri 3x400"], index=0)
+
+    sigenstore_mode = st.selectbox(
+        "Installation compatible SigenStore ?",
+        options=["Auto", "Oui (Store)", "Non (Hybride)"],
+        index=0,
+    )
 
     max_dc_ac = st.slider("Ratio DC/AC max", min_value=1.0, max_value=1.5, value=1.30, step=0.01)
 
@@ -435,6 +441,13 @@ with st.sidebar:
     st.markdown("---")
     month_for_hours = st.slider("Mois pour le profil horaire", min_value=1, max_value=12, value=6)
 
+# Détermination de la famille d'onduleur préférée
+if sigenstore_mode == "Oui (Store)":
+    inv_family_pref = "Store"
+elif sigenstore_mode == "Non (Hybride)":
+    inv_family_pref = "Hybride"
+else:
+    inv_family_pref = None
 
 # ----------------------------------------------------
 # CALCULS PRINCIPAUX
@@ -443,14 +456,28 @@ p_stc = get_panel_power(panel_id)
 p_dc_total_theoretical = p_stc * n_modules
 
 # Sélection / recommandation onduleur
-recommended = get_recommended_inverter(p_dc_total_theoretical, grid_type, max_dc_ac)
+recommended = get_recommended_inverter(
+    p_dc_total_theoretical,
+    grid_type,
+    max_dc_ac,
+    inv_family_pref
+)
 
 inv_options = []
 if recommended is not None:
     inv_options.append(f"(Auto) {recommended}")
-inv_options += [inv[0] for inv in INVERTERS if inv[8] == grid_type]
-if not inv_options:
-    inv_options = [inv[0] for inv in INVERTERS]
+
+# Liste filtrée par type de réseau et éventuellement famille
+filtered_inverters = [
+    inv for inv in INVERTERS
+    if inv[8] == grid_type and (inv_family_pref is None or inv[9] == inv_family_pref)
+]
+
+# fallback si rien avec la famille demandée
+if not filtered_inverters:
+    filtered_inverters = [inv for inv in INVERTERS if inv[8] == grid_type] or INVERTERS
+
+inv_options += [inv[0] for inv in filtered_inverters]
 
 selected_inv_label = st.sidebar.selectbox("Onduleur", options=inv_options, index=0)
 if selected_inv_label.startswith("(Auto) "):
