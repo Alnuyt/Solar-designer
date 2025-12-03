@@ -139,7 +139,7 @@ def generate_workbook_bytes(config: dict) -> bytes:
     ws_ch["B5"] = config.get("battery_kwh", 0.0)
 
     ws_ch["A6"] = "Ratio DC/AC max"
-    ws_ch["B6"] = config.get("max_dc_ac", 1.3)
+    ws_ch["B6"] = config.get("max_dc_ac", 1.5)
 
     ws_ch["A7"] = "Onduleur"
     ws_ch["B7"] = config.get("inverter_id", "")
