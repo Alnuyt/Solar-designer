@@ -54,7 +54,7 @@ def get_inverter_elec(inv_id: str):
     Vdc_max, Vmpp_min, Vmpp_max, Impp_max, nb_mppt, P_ac_nom.
     """
     for inv in INVERTERS:
-        # (id, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type)
+        # (id, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max, V_DC_max, I_MPPT, Nb_MPPT, Type_réseau, Famille)
         if inv[0] == inv_id:
             return {
                 "id": inv[0],
@@ -66,6 +66,7 @@ def get_inverter_elec(inv_id: str):
                 "Impp_max": float(inv[6]),
                 "nb_mppt": int(inv[7]),
                 "type_reseau": inv[8],
+                "famille": inv[9]
             }
     return None
 
