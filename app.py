@@ -122,23 +122,35 @@ def hourly_profile(profile_name: str):
 # ----------------------------------------------------
 # OPTIMISATION DES STRINGS
 # ----------------------------------------------------
+def get_nominal_dc_voltage(inverter):
+    """Nominal DC voltage based on Sigenergy datasheets."""
+    grid = inverter["type_reseau"]
+
+    if grid == "Mono":
+        return 350.0
+    if grid == "Tri 3x230":
+        return 360.0
+    if grid == "Tri 3x400":
+        return 600.0
+
+    # fallback if unknown: mid-MPPT
+    return (inverter["Vmpp_min"] + inverter["Vmpp_max"]) / 2.0
+
+
 def optimize_strings(
     N_tot: int,
     panel: dict,
     inverter: dict,
     T_min: float,
     T_max: float,
+    ratio_dc_ac_target: float = 1.35,
+    ratio_dc_ac_min: float = 1.10,
+    ratio_dc_ac_max: float = 1.50,
 ):
-    """
-    Optimisation automatique des strings :
-    - calcule N_series, N_strings, N_used, P_dc, ratio DC/AC
-    - 1 string max par MPPT (dans la pratique : soit 0 soit 1 string par MPPT)
-    - vérifie Voc froid, Vmp chaud, courant MPPT
-    """
     Voc = panel["Voc"]
     Vmp = panel["Vmp"]
     Isc = panel["Isc"]
-    alpha_V = panel["alpha_V"] / 100.0  # %/°C -> 1/°C
+    alpha_V = panel["alpha_V"] / 100.0
     Pstc = panel["Pstc"]
 
     Vdc_max = inverter["Vdc_max"]
@@ -148,73 +160,100 @@ def optimize_strings(
     nb_mppt = inverter["nb_mppt"]
     P_ac = inverter["P_ac"]
 
-    voc_factor_cold = (1 + alpha_V * (T_min - 25.0))
-    vmp_factor_hot = (1 + alpha_V * (T_max - 25.0))
+    voc_factor_cold = (1 + alpha_V * (T_min - 25))
+    vmp_factor_hot = (1 + alpha_V * (T_max - 25))
 
     if voc_factor_cold <= 0 or vmp_factor_hot <= 0:
         return None
 
-    # Bornes sur le nombre de modules en série
+    # Nominal DC voltage (e.g. 350 V mono)
+    Vnom = get_nominal_dc_voltage(inverter)
+
+    # Allowed range of N_series
     N_series_max = math.floor(Vdc_max / (Voc * voc_factor_cold))
     N_series_min = math.ceil(Vmpp_min / (Vmp * vmp_factor_hot))
-    N_series_min = max(N_series_min, 6)  # au moins 6 modules / string
+    N_series_min = max(N_series_min, 3)  # Sigen accepts low-length strings
 
     if N_series_min > N_series_max:
         return None
 
+    # Ideal series count
+    N_series_ideal = round(Vnom / (Vmp * vmp_factor_hot))
+
     best = None
     best_score = -1e9
 
-    for N_series in range(N_series_min, N_series_max + 1):
+    # Scan all possible series sizes around optimal
+    candidate_series = list(range(N_series_min, N_series_max + 1))
+
+    for N_series in candidate_series:
+
         Voc_cold = N_series * Voc * voc_factor_cold
         Vmp_hot = N_series * Vmp * vmp_factor_hot
 
-        # Vérif tension
         if Voc_cold > Vdc_max:
             continue
         if not (Vmpp_min <= Vmp_hot <= Vmpp_max):
             continue
 
-        # Nombre théorique de strings possibles
-        N_strings_theo = N_tot // N_series
-        if N_strings_theo < 1:
-            continue
+        # Maximum possible *full* strings of this size
+        N_full_strings = N_tot // N_series
+        remainder = N_tot % N_series
 
-        # 1 string max par MPPT
-        N_strings_max = min(N_strings_theo, nb_mppt)
+        # Because 1 string per MPPT, max strings = nb_mppt
+        if N_full_strings > nb_mppt:
+            N_full_strings = nb_mppt
+            remainder = N_tot - N_series * nb_mppt
 
-        for N_strings in range(1, N_strings_max + 1):
-            # On câble 1 string sur les N_strings premiers MPPT, les autres restent vides
-            strings_per_mppt = [1 if i < N_strings else 0 for i in range(nb_mppt)]
+        # Now create string distribution:
+        # - Full strings of size N_series
+        # - Remainder absorbed as one last string of length remainder (if >0)
+        strings = []
 
-            # Courant par MPPT : 1 seul string max -> Isc <= I_MPPT
-            if Isc > Impp_max:
-                continue
+        # full strings
+        for _ in range(N_full_strings):
+            strings.append(N_series)
 
-            N_used = N_series * N_strings
+        # remainder string
+        if remainder > 0 and len(strings) < nb_mppt:
+            strings.append(remainder)
+
+        # fill empty MPPTs
+        while len(strings) < nb_mppt:
+            strings.append(0)
+
+        # Check current constraint
+        for s in strings:
+            if s > 0:
+                if Isc > Impp_max:
+                    break
+        else:
+            N_used = sum(strings)
             P_dc = N_used * Pstc
             ratio_dc_ac = P_dc / P_ac
 
-            # Critère principal : maximiser le nombre de modules utilisés.
-            # Secondaire : utiliser un maximum de MPPT, puis favoriser
-            # légèrement les strings plus longues.
+            if not (ratio_dc_ac_min <= ratio_dc_ac <= ratio_dc_ac_max):
+                continue
+
+            # Scoring
             score = (
-                1000 * N_used             # max de panneaux câblés
-                - 10 * abs(nb_mppt - N_strings)  # on préfère utiliser tous les MPPT
-                + N_series               # petite préférence pour des strings plus longues
+                1000 * N_used
+                - 50 * abs(N_series - N_series_ideal)
+                + 200 * sum(1 for s in strings if s > 0)
             )
 
             if score > best_score:
                 best_score = score
                 best = {
-                    "N_series": N_series,
-                    "N_strings": N_strings,
+                    "strings": strings,
                     "N_used": N_used,
+                    "N_series_main": N_series,
                     "P_dc": P_dc,
                     "ratio_dc_ac": ratio_dc_ac,
                 }
 
     return best
+
 
 
 # ----------------------------------------------------
