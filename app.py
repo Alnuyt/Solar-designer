@@ -280,7 +280,7 @@ def select_best_inverter(
     best_score = -1e9
 
     for inv in INVERTERS:
-        inv_id, p_ac, p_dc_max, vmin, vmax, vdcmax, imppt, nb_mppt, inv_type, inv_family = inv
+        inv_id, p_ac, p_dc_max, vmin, vmax, vdcmax, imppt, nb_mppt, inv_type, inv_family, v_nom_dc = inv
 
         if inv_type != grid_type:
             continue
