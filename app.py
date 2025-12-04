@@ -41,8 +41,6 @@ def get_panel_elec(panel_id: str):
 
 def get_inverter_elec(inv_id: str):
     for inv in INVERTERS:
-        # (ID, P_AC_nom, P_DC_max, V_MPP_min, V_MPP_max,
-        #  V_DC_max, I_MPPT, Nb_MPPT, Type_reseau, Famille)
         if inv[0] == inv_id:
             return {
                 "id": inv[0],
@@ -55,7 +53,9 @@ def get_inverter_elec(inv_id: str):
                 "nb_mppt": int(inv[7]),
                 "type_reseau": inv[8],
                 "famille": inv[9],
+                "V_nom_dc": float(inv[10]),
             }
+
     return None
 
 
