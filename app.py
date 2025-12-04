@@ -128,15 +128,12 @@ def optimize_strings(
     inverter: dict,
     T_min: float,
     T_max: float,
-    ratio_dc_ac_target: float = 1.35,
-    ratio_dc_ac_min: float = 1.10,
-    ratio_dc_ac_max: float = 1.50,
 ):
     """
     Optimisation automatique des strings :
     - calcule N_series, N_strings, N_used, P_dc, ratio DC/AC
-    - max 2 strings / MPPT
-    - vérifie Voc froid, Vmp chaud, courant MPPT, ratio DC/AC
+    - 1 string max par MPPT (dans la pratique : soit 0 soit 1 string par MPPT)
+    - vérifie Voc froid, Vmp chaud, courant MPPT
     """
     Voc = panel["Voc"]
     Vmp = panel["Vmp"]
@@ -157,6 +154,7 @@ def optimize_strings(
     if voc_factor_cold <= 0 or vmp_factor_hot <= 0:
         return None
 
+    # Bornes sur le nombre de modules en série
     N_series_max = math.floor(Vdc_max / (Voc * voc_factor_cold))
     N_series_min = math.ceil(Vmpp_min / (Vmp * vmp_factor_hot))
     N_series_min = max(N_series_min, 6)  # au moins 6 modules / string
@@ -171,43 +169,39 @@ def optimize_strings(
         Voc_cold = N_series * Voc * voc_factor_cold
         Vmp_hot = N_series * Vmp * vmp_factor_hot
 
+        # Vérif tension
         if Voc_cold > Vdc_max:
             continue
         if not (Vmpp_min <= Vmp_hot <= Vmpp_max):
             continue
 
+        # Nombre théorique de strings possibles
         N_strings_theo = N_tot // N_series
         if N_strings_theo < 1:
             continue
 
-        N_strings_max_mppt = nb_mppt * 2
-        N_strings_max = min(N_strings_theo, N_strings_max_mppt)
+        # 1 string max par MPPT
+        N_strings_max = min(N_strings_theo, nb_mppt)
 
         for N_strings in range(1, N_strings_max + 1):
-            base = N_strings // nb_mppt
-            rest = N_strings % nb_mppt
-            strings_per_mppt = [base + (1 if i < rest else 0) for i in range(nb_mppt)]
+            # On câble 1 string sur les N_strings premiers MPPT, les autres restent vides
+            strings_per_mppt = [1 if i < N_strings else 0 for i in range(nb_mppt)]
 
-            # courant par MPPT
-            if any(s * Isc > Impp_max for s in strings_per_mppt):
+            # Courant par MPPT : 1 seul string max -> Isc <= I_MPPT
+            if Isc > Impp_max:
                 continue
 
             N_used = N_series * N_strings
             P_dc = N_used * Pstc
             ratio_dc_ac = P_dc / P_ac
 
-            if ratio_dc_ac < ratio_dc_ac_min or ratio_dc_ac > ratio_dc_ac_max:
-                continue
-
-            imbalance = max(strings_per_mppt) - min(strings_per_mppt)
-            penalty_ratio = abs(ratio_dc_ac - ratio_dc_ac_target)
-
+            # Critère principal : maximiser le nombre de modules utilisés.
+            # Secondaire : utiliser un maximum de MPPT, puis favoriser
+            # légèrement les strings plus longues.
             score = (
-                -10 * penalty_ratio
-                + 0.02 * N_used
-                - 5 * (N_strings - 1)
-                - 2 * imbalance
-                + 0.5 * N_series
+                1000 * N_used             # max de panneaux câblés
+                - 10 * abs(nb_mppt - N_strings)  # on préfère utiliser tous les MPPT
+                + N_series               # petite préférence pour des strings plus longues
             )
 
             if score > best_score:
@@ -238,7 +232,7 @@ def select_best_inverter(
     """
     Parcourt tous les onduleurs compatibles (type réseau + famille éventuelle),
     optimise les strings pour chacun, et choisit celui qui :
-    - respecte les contraintes
+    - respecte les contraintes électriques (Voc, Vmp, I_MPPT)
     - respecte le ratio DC/AC <= max_dc_ac (slider utilisateur)
     - respecte P_dc <= P_DC_max
     - maximise la puissance DC installée
@@ -291,6 +285,7 @@ def select_best_inverter(
 
     return best
 
+
 with st.sidebar:
     st.markdown("### 🔧 Paramètres généraux")
 
@@ -319,8 +314,14 @@ with st.sidebar:
     else:
         fam_pref = None
 
-    # Ratio DC/AC
-    max_dc_ac = st.slider("Ratio DC/AC max", min_value=1.0, max_value=1.5, value=1.35, step=0.01)
+    # Ratio DC/AC (contrainte uniquement dans le choix d'onduleur)
+    max_dc_ac = st.slider(
+        "Ratio DC/AC max",
+        min_value=1.0,
+        max_value=2.0,   # étendu pour permettre des surdimensionnements plus forts
+        value=1.35,
+        step=0.01,
+    )
 
     # ----------------------------------------------------
     # 🔋 Batterie (important pour Excel)
@@ -338,7 +339,7 @@ with st.sidebar:
     consumption_profile = st.selectbox("Profil mensuel", ["Standard", "Hiver fort", "Été fort"], 0)
 
     hourly_profile_choice = st.selectbox(
-        "Profil horaire", 
+        "Profil horaire",
         ["Uniforme", "Classique (matin + soir)", "Travail journée (soir fort)", "Télétravail"],
         index=1
     )
@@ -386,10 +387,6 @@ with st.sidebar:
 # ----------------------------------------------------
 # CALCULS PRINCIPAUX
 # ----------------------------------------------------
-# ----------------------------------------------------
-# CALCULS PRINCIPAUX
-# ----------------------------------------------------
-
 # 1) Récupérer les caractéristiques de l’onduleur choisi
 inv_elec = get_inverter_elec(inverter_id)
 if inv_elec is None:
@@ -417,7 +414,6 @@ if opt_result is None:
 P_dc = opt_result["P_dc"]
 ratio_dc_ac = opt_result["ratio_dc_ac"]
 p_dc_kwp = P_dc / 1000.0
-
 
 # Profils mensuels
 pv_kwh_per_kwp = monthly_pv_profile_kwh_kwp()
