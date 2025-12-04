@@ -27,15 +27,15 @@ def get_catalog():
         # --- MONO Hybride ---
         ("Hybride2.0Mono", 2000, 4000, 50, 550, 600, 16, 2, "Mono", "Hybride", 350),
         ("Hybride3.0Mono", 3000, 6000, 50, 550, 600, 16, 2, "Mono", "Hybride", 350),
-        ("Hybride6.0Mono", 6000, 12000, 50, 550, 600, 16, 3, "Mono", "Hybride", 350),
+        ("Hybride6.0Mono", 6000, 12000, 50, 550, 600, 16, 2, "Mono", "Hybride", 350),
 
         # --- MONO Store ---
         ("Store3.0Mono", 3000, 6000, 50, 550, 600, 16, 2, "Mono", "Store", 350),
         ("Store3.6Mono", 3680, 7360, 50, 550, 600, 16, 2, "Mono", "Store", 350),
         ("Store4.0Mono", 4000, 8000, 50, 550, 600, 16, 2, "Mono", "Store", 350),
         ("Store4.6Mono", 4600, 9200, 50, 550, 600, 16, 2, "Mono", "Store", 350),
-        ("Store6.0Mono", 6000, 12000, 50, 550, 600, 16, 3, "Mono", "Store", 350),
-        ("Store8.0Mono", 8000, 16000, 50, 550, 600, 16, 4, "Mono", "Store", 350),
+        ("Store6.0Mono", 6000, 12000, 50, 550, 600, 16, 2, "Mono", "Store", 350),
+        ("Store8.0Mono", 8000, 16000, 50, 550, 600, 16, 3, "Mono", "Store", 350),
         ("Store10.0Mono", 10000, 20000, 50, 550, 600, 16, 4, "Mono", "Store", 350),
         ("Store12.0Mono", 12000, 24000, 50, 550, 600, 16, 4, "Mono", "Store", 350),
 
