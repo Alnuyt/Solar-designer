@@ -464,30 +464,46 @@ autocons_monthly = np.minimum(pv_monthly, cons_monthly)
 # ----------------------------------------------------
 # 🔋 Autoconsommation via batterie (modèle simplifié)
 # ----------------------------------------------------
-battery_capacity = float(battery_kwh)  # kWh
-battery_soc = 0.0
+battery_capacity = float(battery_kwh)
 autocons_batt_monthly = np.zeros(12)
 
 if battery_capacity > 0:
+    for m in range(12):
+        days = int(days_in_month[m])
+        if days <= 0:
+            continue
 
-    for i in range(12):
-        prod = pv_monthly[i]
-        cons = cons_monthly[i]
+        pv_day = pv_monthly[m] / days
+        cons_day = cons_monthly[m] / days
 
-        # Direct self-consumption
-        direct = min(prod, cons)
-        surplus = prod - direct
+        pv_h = pv_frac * pv_day
+        cons_h = cons_frac * cons_day
 
-        # Charge the battery
-        battery_soc = min(battery_soc + surplus, battery_capacity)
+        autocons_batt = 0.0
 
-        # Use battery for nighttime deficit
-        deficit = cons - direct
+        # SOC PERSISTANT AU NIVEAU MENSUEL
+        battery_soc = 0.0
 
-        discharge = min(deficit, battery_soc)
+        for _ in range(days):
 
-        battery_soc -= discharge
-        autocons_batt_monthly[i] = discharge
+            for h in range(24):
+                prod = pv_h[h]
+                conso = cons_h[h]
+
+                direct = min(prod, conso)
+                surplus = prod - direct
+                deficit = conso - direct
+
+                # Charge batterie
+                battery_soc = min(battery_soc + surplus, battery_capacity)
+
+                # Décharge
+                discharge = min(deficit, battery_soc)
+                battery_soc -= discharge
+
+                autocons_batt += discharge
+
+        autocons_batt_monthly[m] = autocons_batt
 
 months_labels = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin",
                  "Juil", "Août", "Sep", "Oct", "Nov", "Déc"]
